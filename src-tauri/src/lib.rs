@@ -18,7 +18,17 @@ const TRAY_PNG: &[u8] = include_bytes!("../icons/tray/tray-22.png");
 #[cfg(not(target_os = "macos"))]
 const TRAY_PNG: &[u8] = include_bytes!("../icons/tray/tray-32.png");
 
+/// macOS 上控制 Dock 图标是否可见：窗口进托盘时藏起，窗口唤出时恢复。
+/// 其它平台为空操作，保证跨平台编译（CI 同时构建 macOS / Windows）。
+#[cfg(target_os = "macos")]
+fn set_dock(app: &tauri::AppHandle, visible: bool) {
+    let _ = app.set_dock_visibility(visible);
+}
+#[cfg(not(target_os = "macos"))]
+fn set_dock(_app: &tauri::AppHandle, _visible: bool) {}
+
 fn show_main_window(app: &tauri::AppHandle) {
+    set_dock(app, true);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
@@ -89,6 +99,8 @@ pub fn run() {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
+                // 开机自启静默进托盘：Dock 图标也一并藏起，只留状态栏图标
+                set_dock(app.handle(), false);
             }
 
             // ---- 托盘菜单：显示主窗口 / 退出 ----
@@ -124,6 +136,7 @@ pub fn run() {
                             // 左键：可见则隐藏，否则唤起（驻留型应用的经典交互）
                             if win.is_visible().unwrap_or(false) {
                                 let _ = win.hide();
+                                set_dock(app, false);
                             } else {
                                 show_main_window(app);
                             }
@@ -142,6 +155,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
+                set_dock(window.app_handle(), false);
                 api.prevent_close();
             }
         })
