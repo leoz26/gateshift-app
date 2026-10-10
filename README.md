@@ -17,6 +17,7 @@ gateshift-app/
 │   │   ├── StatusCard.tsx      # 当前接口 / 网关 / DNS / 档位
 │   │   ├── ModeSwitch.tsx      # 主路由 ↔ 旁路由 一键切换（带确认弹窗）
 │   │   ├── ConfigEditor.tsx    # 网关 + DNS 编辑（前端先做 IPv4 校验）
+│   │   └── （开机自启开关在 App.tsx 底部设置区，基于 tauri-plugin-autostart）
 │   │   └── LogView.tsx         # 操作 / 错误日志
 │   └── styles.css
 ├── src-tauri/                  # Rust 侧
@@ -25,9 +26,11 @@ gateshift-app/
 │   ├── capabilities/default.json
 │   └── src/
 │       ├── main.rs             # 二进制入口，调用 lib::run()
-│       ├── lib.rs              # 注册 State + 命令 = invoke_handler
+│       ├── lib.rs              # 注册 State + 命令 = invoke_handler；托盘 + 开机自启
 │       ├── state.rs            # AppState：持有 NetworkManager 单例
 │       └── commands.rs         # 10 个薄命令，全部委托给 NetworkManager
+```
+
 ├── icons/                      # 由 scripts/make-icons.mjs 生成（含 tray/ 托盘模板图）
 ├── gateshift-core/             # vendoring 进来的核心库（路径依赖 ../gateshift-core）
 ├── .github/workflows/build.yml # GitHub Actions：macOS + Windows 自动构建
