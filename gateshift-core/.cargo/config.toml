@@ -1,0 +1,11 @@
+# 仅对本项目生效的构建配置（不影响全局 ~/.cargo/config.toml）
+# 说明：当前网络下 crates.io 直连不通（被旁路由 fake-IP 接管），因此走国内镜像。
+# 在别的网络环境下可以直接删掉这个文件。
+[source.crates-io]
+replace-with = "ustc"
+
+[source.ustc]
+registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"
+
+[net]
+git-fetch-with-cli = true
