@@ -232,6 +232,27 @@ export default function App() {
             <span className="switch__slider" />
           </label>
         </div>
+
+        {config && (
+          <div className="setting-row">
+            <div className="setting-row__text">
+              <span className="setting-row__title">退出时还原主路由</span>
+              <span className="setting-row__hint">
+                退出软件时自动把网关切回「主路由」（需弹一次授权）
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={config.restore_on_exit}
+                onChange={(e) =>
+                  handleSaveConfig({ ...config, restore_on_exit: e.target.checked })
+                }
+              />
+              <span className="switch__slider" />
+            </label>
+          </div>
+        )}
       </section>
 
       {config && <ConfigEditor config={config} onSave={handleSaveConfig} />}

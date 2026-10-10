@@ -9,6 +9,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use gateshift_core::RouterMode;
 
 /// 托盘图标：macOS 用 22pt（模板图会自动适配 Retina 与明暗色），
 /// 其余平台（Windows）用 32px。编译期直接嵌进二进制。
@@ -22,6 +23,34 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+    }
+}
+
+/// 退出前：若开启「还原主路由」且当前不在主路由，则切回主路由（需弹一次系统授权）。
+/// 已是主路由就不弹授权，直接退出。任何失败只记录、不阻断退出。
+fn restore_on_exit_if_needed(app: &tauri::AppHandle) {
+    // 仅读取配置开关（语句级临时值，避免 State 与 MutexGuard 的借用纠缠）
+    let restore = app.state::<state::AppState>().lock().config().restore_on_exit;
+    if !restore {
+        return;
+    }
+    // 先探测当前档位：已是主路由就别弹 UAC 了
+    let mode = match app.state::<state::AppState>().lock().detect() {
+        Ok(st) => st.mode,
+        Err(e) => {
+            eprintln!("[gateshift] 退出前探测失败，跳过还原：{e}");
+            return;
+        }
+    };
+    if mode == RouterMode::MainRouter {
+        return;
+    }
+    if let Err(e) = app
+        .state::<state::AppState>()
+        .lock()
+        .switch_to(RouterMode::MainRouter)
+    {
+        eprintln!("[gateshift] 退出前还原主路由失败（仍正常退出）：{e}");
     }
 }
 
@@ -77,7 +106,10 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        restore_on_exit_if_needed(app);
+                        app.exit(0);
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

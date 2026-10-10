@@ -29,6 +29,7 @@ export interface RouterProfile {
 
 export interface Config {
   set_dns_on_switch: boolean;
+  restore_on_exit: boolean;
   main_router: RouterProfile;
   bypass_router: RouterProfile;
 }
