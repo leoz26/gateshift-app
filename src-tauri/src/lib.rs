@@ -36,6 +36,12 @@ pub fn run() {
     tauri::Builder::default()
         .manage(state::AppState::new())
         .plugin(autostart)
+        // 单实例：第二个实例拉起时直接聚焦已存在的窗口（常驻托盘场景必备）。
+        // 注意——带 --hidden 的开机自启实例是「第一个」，用户之后双击图标属于第二个，
+        // 这里只负责把窗口唤到前台，不会重复初始化。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::probe,
             commands::list_interfaces,
