@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import type { Config, LogEntry, NetworkState, RouterMode, Snapshot } from "./lib/types";
 import {
   alignDns,
+  getAutostartEnabled,
   getConfig,
   probe,
   resetDnsToAuto,
   restore,
   saveConfig,
+  setAutostart,
   snapshot as takeSnapshot,
   switchTo,
 } from "./lib/api";
@@ -22,10 +24,31 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [pendingMode, setPendingMode] = useState<RouterMode | null>(null);
   const [lastSnapshot, setLastSnapshot] = useState<Snapshot | null>(null);
+  const [autostart, setAutostartOn] = useState<boolean | null>(null);
 
   const pushLog = useCallback((level: LogEntry["level"], msg: string) => {
     setLogs((prev) => [{ time: new Date().toLocaleTimeString(), level, msg }, ...prev].slice(0, 200));
   }, []);
+
+  // 加载当前开机自启状态（开发模式可能不可用时静默置为 null）。
+  useEffect(() => {
+    getAutostartEnabled()
+      .then(setAutostartOn)
+      .catch(() => setAutostartOn(null));
+  }, []);
+
+  const handleToggleAutostart = useCallback(
+    async (on: boolean) => {
+      try {
+        await setAutostart(on);
+        setAutostartOn(on);
+        pushLog("info", on ? "已开启开机自启" : "已关闭开机自启");
+      } catch (e) {
+        pushLog("error", `设置开机自启失败：${(e as Error).message}`);
+      }
+    },
+    [pushLog]
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -186,6 +209,28 @@ export default function App() {
           >
             还原留底
           </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="setting-row">
+          <div className="setting-row__text">
+            <span className="setting-row__title">开机自启</span>
+            <span className="setting-row__hint">
+              {autostart === null
+                ? "当前环境不可用（请使用打包后的 .app / .msi）"
+                : "登录系统后自动在后台运行（进托盘，不弹窗）"}
+            </span>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={autostart === true}
+              disabled={autostart === null}
+              onChange={(e) => handleToggleAutostart(e.target.checked)}
+            />
+            <span className="switch__slider" />
+          </label>
         </div>
       </section>
 

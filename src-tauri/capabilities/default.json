@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "GateShift 主窗口默认权限（自定义命令默认放行，这里只给核心 API 的最小集）",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "autostart:default"]
 }

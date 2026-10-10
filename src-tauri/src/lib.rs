@@ -27,8 +27,15 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 开机自启插件：macOS 默认用 LaunchAgent 写 ~/Library/LaunchAgents，
+    // Windows 写注册表 Run 键。args 里的 `--hidden` 用于「开机自启时静默进托盘、不弹窗」。
+    let autostart = tauri_plugin_autostart::Builder::new()
+        .args(["--hidden"])
+        .build();
+
     tauri::Builder::default()
         .manage(state::AppState::new())
+        .plugin(autostart)
         .invoke_handler(tauri::generate_handler![
             commands::probe,
             commands::list_interfaces,
@@ -42,6 +49,13 @@ pub fn run() {
             commands::mode_of,
         ])
         .setup(|app| {
+            // 若是「开机自启」拉起的（带了 --hidden），直接最小化进托盘，不弹主窗口。
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            }
+
             // ---- 托盘菜单：显示主窗口 / 退出 ----
             let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出 GateShift", true, None::<&str>)?;
