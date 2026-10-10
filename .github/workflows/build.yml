@@ -79,22 +79,24 @@ jobs:
     permissions:
       contents: write # 创建 Release 必须要写权限（覆盖顶层的 contents: read）
     steps:
+      # 保留目录结构（dist/gateshift-macos/...、dist/gateshift-windows/...），用通配符挑文件
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
           path: dist
 
-      # .app 是目录，Release 附件只能是单文件，先压成 zip 再清理所有目录
-      - name: Pack .app and clean directories
+      # .app 是目录，Release 附件只能是单文件，压成 zip（产物在子目录里，不能粗暴删目录）
+      - name: Pack .app
         run: |
-          cd dist
-          find . -mindepth 1 -type d -name "*.app" -exec zip -qry {}.zip {} \;
-          find . -mindepth 1 -type d -exec rm -rf {} +
-          ls -la
+          find dist -type d -name "*.app" -exec zip -qry {}.zip {} \;
+          find dist -type f | sort
 
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/**/*.dmg
+            dist/**/*.msi
+            dist/**/*.exe
+            dist/**/*.zip
           generate_release_notes: true # 按提交记录自动生成发行说明
