@@ -73,6 +73,9 @@ pub struct Config {
     /// 切换网关时是否同时设置系统 DNS。
     #[serde(default = "default_true")]
     pub set_dns_on_switch: bool,
+    /// 退出软件时是否把网关还原到「主路由」。默认关，需用户主动开启。
+    #[serde(default)]
+    pub restore_on_exit: bool,
     pub main_router: RouterProfile,
     pub bypass_router: RouterProfile,
 }
@@ -85,6 +88,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             set_dns_on_switch: true,
+            restore_on_exit: false,
             main_router: RouterProfile::new(
                 "主路由",
                 "192.168.1.1",
