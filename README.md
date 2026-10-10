@@ -26,7 +26,7 @@ gateshift-app/
 │   ├── capabilities/default.json
 │   └── src/
 │       ├── main.rs             # 二进制入口，调用 lib::run()
-│       ├── lib.rs              # 注册 State + 命令 = invoke_handler；托盘 + 开机自启
+│       ├── lib.rs              # 注册 State + 命令 = invoke_handler；托盘 + 开机自启 + 单实例（tray + autostart + single-instance）
 │       ├── state.rs            # AppState：持有 NetworkManager 单例
 │       └── commands.rs         # 10 个薄命令，全部委托给 NetworkManager
 ```

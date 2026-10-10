@@ -2,6 +2,10 @@
 //! 脚本文本与字符串逻辑在 `windows_scripts`（那个模块跨平台编译，可以跑测试）。
 
 use std::process::Command;
+// Windows 子系统程序（Tauri 是 GUI）spawn 控制台子进程时，默认会临时分配一个黑窗口；
+// 加 CREATE_NO_WINDOW 让 powershell.exe 在后台静默跑，不再抢出命令行窗口。
+// windows.rs 只在 Windows 下编译，这里直接 use 不会有跨平台问题。
+use std::os::windows::process::CommandExt;
 
 use super::windows_scripts as scripts;
 use super::{powershell, NetworkPlatform};
@@ -18,7 +22,9 @@ impl WindowsPlatform {
     /// 并在脚本里把输出编码强制成 UTF-8，避免中文名回传时乱码。
     fn ps(script: &str) -> Result<String> {
         let encoded = powershell::encoded_command(&powershell::ps_wrap(script));
-        let out = Command::new("powershell.exe")
+        let mut cmd = Command::new("powershell.exe");
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：后台静默，不弹黑窗
+        let out = cmd
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -47,12 +53,15 @@ impl WindowsPlatform {
     fn ps_elevated(script: &str) -> Result<()> {
         let inner = powershell::encoded_command(&powershell::ps_wrap_elevated(script));
         // 1223 = ERROR_CANCELLED，用户在 UAC 弹窗点了「否」
+        // -WindowStyle Hidden：被提权拉起的那个 powershell 不再闪黑窗（UAC 弹窗本身不受影响）。
         let outer = format!(
-            "$ErrorActionPreference='Stop';try{{$p=Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','{}'}}catch{{exit 1223}};exit $p.ExitCode",
+            "$ErrorActionPreference='Stop';try{{$p=Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','{}'}}catch{{exit 1223}};exit $p.ExitCode",
             inner
         );
         let encoded = powershell::encoded_command(&outer);
-        let out = Command::new("powershell.exe")
+        let mut cmd = Command::new("powershell.exe");
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：外层这个 powershell 也静默
+        let out = cmd
             .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
             .output()
             .map_err(|e| Error::Command {
@@ -133,6 +142,43 @@ impl NetworkPlatform for WindowsPlatform {
                 .map(str::to_string)
                 .collect(),
         ))
+    }
+
+    /// 覆写：网关 + DNS 合并成一次 PowerShell，省掉一次进程冷启动（~300ms+）。
+    /// 用两个不可能出现在 IP 里的标记分隔输出，解析时按标记切分即可。
+    fn get_gateway_and_dns(
+        &self,
+        interface: &NetworkInterface,
+    ) -> Result<(Option<String>, DnsConfig)> {
+        let index = Self::index_of(interface)?;
+        let script = format!(
+            "Write-Output '===GATEWAY==='\n{}\nWrite-Output '===DNS==='\n{}",
+            scripts::get_gateway_script(index),
+            scripts::get_dns_script(index),
+        );
+        let out = Self::ps(&script)?;
+
+        let gateway = out
+            .split("===DNS===")
+            .next()
+            .and_then(|g| g.split("===GATEWAY===").nth(1))
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "0.0.0.0")
+            .map(str::to_string);
+
+        let dns = out
+            .split("===DNS===")
+            .nth(1)
+            .map(|d| {
+                d.lines()
+                    .map(str::trim)
+                    .filter(|l| is_ipv4(l))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok((gateway, DnsConfig::new(dns)))
     }
 
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()> {

@@ -53,6 +53,15 @@ pub trait NetworkPlatform: Send + Sync {
     /// 读取该接口的 IPv4 DNS；空列表表示「自动（DHCP）」。
     fn get_dns(&self, interface: &NetworkInterface) -> Result<DnsConfig>;
 
+    /// 一次性读出「网关 + DNS」。默认实现退化为分别调用两个接口；
+    /// Windows 平台覆写为**一次** PowerShell，减少进程数与卡顿（见 `windows.rs`）。
+    fn get_gateway_and_dns(
+        &self,
+        interface: &NetworkInterface,
+    ) -> Result<(Option<String>, DnsConfig)> {
+        Ok((self.get_gateway(interface)?, self.get_dns(interface)?))
+    }
+
     /// 设置该接口的 IPv4 DNS；`dns` 为空表示恢复「自动（DHCP）」。
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()>;
 

@@ -80,8 +80,8 @@ impl NetworkManager {
 
     pub fn detect(&self) -> Result<NetworkState> {
         let interface = self.target_interface()?;
-        let gateway = self.platform.get_gateway(&interface)?;
-        let dns = self.platform.get_dns(&interface)?;
+        // 网关 + DNS 合并成一次平台调用（Windows 下一步 PowerShell，macOS 退化为两次）
+        let (gateway, dns) = self.platform.get_gateway_and_dns(&interface)?;
         let mode = self.mode_of(gateway.as_deref());
         Ok(NetworkState {
             interface,
