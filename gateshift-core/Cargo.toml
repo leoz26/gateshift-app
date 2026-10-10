@@ -1,0 +1,25 @@
+[package]
+name = "gateshift-core"
+version = "0.2.0"
+edition = "2021"
+description = "旁路由网关切换 + 系统 DNS 核心逻辑（macOS / Windows 通用），不含任何界面"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+dirs = "5"
+
+[features]
+default = []
+# 对外暴露 testkit 测试工具（MockPlatform / MockHandle），供下游（如 Tauri 应用）
+# 在集成测试里断言网络操作。本库自身 `cargo test` 总能用到它。
+testkit = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

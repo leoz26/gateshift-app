@@ -1,0 +1,13 @@
+{
+  "set_dns_on_switch": true,
+  "main_router": {
+    "name": "主路由",
+    "gateway": "192.168.1.1",
+    "dns": ["223.5.5.5", "8.8.8.8"]
+  },
+  "bypass_router": {
+    "name": "旁路由",
+    "gateway": "192.168.1.11",
+    "dns": ["192.168.1.11"]
+  }
+}

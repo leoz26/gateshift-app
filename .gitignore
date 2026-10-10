@@ -1,0 +1,24 @@
+# dependencies
+node_modules
+
+# frontend build output
+dist
+
+# Rust build artifacts
+src-tauri/target
+gateshift-core/target
+
+# Tauri generated schemas
+src-tauri/gen
+
+# OS / editor noise
+.DS_Store
+*.log
+
+# 应用运行时可能写入的本地配置（非源码）
+src-tauri/config.json
+gateshift-core/config.json
+
+# 本地打包产出（CI 走 artifact，无需入库）
+*.dmg
+*.app
