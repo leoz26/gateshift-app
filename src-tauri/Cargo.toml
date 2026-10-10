@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# 开机自启：macOS 写 LaunchAgent plist，Windows 写注册表 Run 键，一个插件跨平台。
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 核心库以相对路径 vendoring 进本仓库（保持「core 只管逻辑、Tauri 只管壳」分层），
