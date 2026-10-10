@@ -1,6 +1,6 @@
 [package]
 name = "gateshift-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "GateShift — 默认网关 / 系统 DNS 切换（Tauri + React 壳）"
 authors = ["GateShift"]
 edition = "2021"

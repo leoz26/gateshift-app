@@ -7,9 +7,31 @@ mod state;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Manager, RunEvent,
 };
 use gateshift_core::RouterMode;
+
+/// 简易诊断日志：写进配置目录下的 gateshift.log（Windows GUI 进程看不到 stderr，
+/// 定位「窗口几秒后消失」这类问题只能靠文件日志）。写失败一律忽略，不影响主流程。
+fn log_line(msg: &str) {
+    use std::io::Write;
+    let Some(path) = gateshift_core::Config::default_config_path() else {
+        return;
+    };
+    let Some(dir) = path.parent() else { return };
+    let _ = std::fs::create_dir_all(dir);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("gateshift.log"))
+    {
+        let _ = writeln!(f, "[{secs}] {msg}");
+    }
+}
 
 /// 托盘图标：macOS 用 22pt（模板图会自动适配 Retina 与明暗色），
 /// 其余平台（Windows）用 32px。编译期直接嵌进二进制。
@@ -28,11 +50,14 @@ fn set_dock(app: &tauri::AppHandle, visible: bool) {
 fn set_dock(_app: &tauri::AppHandle, _visible: bool) {}
 
 fn show_main_window(app: &tauri::AppHandle) {
+    log_line("show_main_window: 唤出主窗口");
     set_dock(app, true);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+    } else {
+        log_line("show_main_window: 找不到 main 窗口！");
     }
 }
 
@@ -94,8 +119,11 @@ pub fn run() {
             commands::mode_of,
         ])
         .setup(|app| {
+            let args: Vec<String> = std::env::args().collect();
+            log_line(&format!("进程启动，参数: {args:?}"));
             // 若是「开机自启」拉起的（带了 --hidden），直接最小化进托盘，不弹主窗口。
             if std::env::args().any(|a| a == "--hidden") {
+                log_line("以 --hidden 启动，静默进托盘");
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
@@ -119,27 +147,46 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
                     "quit" => {
+                        log_line("托盘菜单：退出");
                         restore_on_exit_if_needed(app);
                         app.exit(0);
                     }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(win) = app.get_webview_window("main") {
-                            // 左键：可见则隐藏，否则唤起（驻留型应用的经典交互）
-                            if win.is_visible().unwrap_or(false) {
-                                let _ = win.hide();
-                                set_dock(app, false);
-                            } else {
-                                show_main_window(app);
-                            }
+                    // 左键单击（抬起时）与双击都触发显示/隐藏：Windows 上单击可能被吞，
+                    // 双击是用户最常用的唤出方式，两条路径都接上。
+                    let is_left_click = matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    );
+                    let is_left_double = matches!(
+                        event,
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        }
+                    );
+                    if !is_left_click && !is_left_double {
+                        return;
+                    }
+                    log_line(&format!(
+                        "托盘左键事件: {}",
+                        if is_left_double { "双击" } else { "单击" }
+                    ));
+                    let app = tray.app_handle();
+                    if let Some(win) = app.get_webview_window("main") {
+                        // 左键：可见则隐藏，否则唤起（驻留型应用的经典交互）
+                        if win.is_visible().unwrap_or(false) {
+                            log_line("窗口可见 → 隐藏");
+                            let _ = win.hide();
+                            set_dock(app, false);
+                        } else {
+                            show_main_window(app);
                         }
                     }
                 })
@@ -154,11 +201,27 @@ pub fn run() {
         // 关窗 ≠ 退出：隐藏到托盘，驻留后台；真正退出走托盘菜单「退出 GateShift」
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                log_line("窗口关闭请求 → 隐藏进托盘");
                 let _ = window.hide();
                 set_dock(window.app_handle(), false);
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running gateshift-app");
+        .build(tauri::generate_context!())
+        .expect("error while building gateshift-app")
+        .run(|_app, event| {
+            // Windows 关键：当「最后一个窗口被关闭/隐藏」时，Tauri 会发出
+            // ExitRequested { code: None }；不拦下，事件循环就会自行结束 ——
+            // 表现正是「从托盘唤出的窗口过几秒自己消失，进程其实已经退出」。
+            // 真正退出走托盘菜单的 app.exit(0)（带 code），不受这里影响。
+            if let RunEvent::ExitRequested { api, code, .. } = event {
+                match code {
+                    Some(c) => log_line(&format!("ExitRequested(code={c}) → 正常退出")),
+                    None => {
+                        log_line("ExitRequested(code=None) → 拦下，保持托盘常驻");
+                        api.prevent_exit();
+                    }
+                }
+            }
+        });
 }
