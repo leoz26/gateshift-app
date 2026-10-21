@@ -3,9 +3,12 @@ import type { LogEntry } from "../lib/types";
 export default function LogView({ logs }: { logs: LogEntry[] }) {
   return (
     <section className="card card--log">
-      <h3>日志</h3>
+      <div className="card__head">
+        <h3>操作日志</h3>
+        {logs.length > 0 && <span className="chip">{logs.length}</span>}
+      </div>
       {logs.length === 0 ? (
-        <p className="muted">暂无操作</p>
+        <p className="muted log__empty">暂无操作</p>
       ) : (
         <ul className="log">
           {logs.map((l, i) => (
