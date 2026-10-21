@@ -179,6 +179,4 @@ npm run tauri build   # 出包，产物在 src-tauri/target/release/bundle/
 
 ## License
 
-MIT。核心逻辑库 `gateshift-core` 在 `Cargo.toml` 中声明为 `MIT`。
-
-<!-- TODO: 仓库目前没有 LICENSE 文件，正式发布前请补一份 MIT LICENSE 全文。 -->
+MIT。仓库根目录的 [`LICENSE`](LICENSE) 为完整全文；`package.json` 与两个 `Cargo.toml` 均已声明 `MIT`。
