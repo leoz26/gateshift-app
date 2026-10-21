@@ -21,11 +21,15 @@ tauri-plugin-autostart = "2"
 # 单实例：已在运行（驻留托盘）时再双击图标/快捷方式，聚焦已有窗口而非新开一个进程。
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 # 核心库以相对路径 vendoring 进本仓库（保持「core 只管逻辑、Tauri 只管壳」分层），
 # 这样仓库自包含，GitHub Actions 或任何机器 clone 后都能直接构建，无需本机绝对路径。
 # 若你更希望 core 作为独立仓库维护，可改成 git 依赖或 git submodule。
 gateshift-core = { path = "../gateshift-core" }
+
+[dev-dependencies]
+# 只被 commands.rs 的 #[cfg(test)] 模块使用（断言错误载荷为 {code, message}），
+# 因此放在 dev-dependencies，发布构建不引入它。
+serde_json = "1"
 
 [features]
 # 应用自身的命令层集成测试用：开启后可在测试里用 testkit 的 MockPlatform
