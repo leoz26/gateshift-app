@@ -19,6 +19,14 @@ export interface NetworkState {
   gateway: string | null;
   dns: DnsConfig;
   mode: RouterMode;
+  /**
+   * DNS 是否真的读到了。`false` 表示 `dns` 只是占位空列表（读不到），
+   * 典型场景是 VPN 连接期间：`utun*` 接口的 DNS 不受系统管理，
+   * 此时「对齐 DNS」「恢复自动」都会返回 `dns_unmanageable` 错误。
+   *
+   * 旧后端不会带这个字段 → 可选，缺省按 `true` 处理。
+   */
+  dns_readable?: boolean;
 }
 
 export interface RouterProfile {
@@ -36,6 +44,13 @@ export interface Config {
 
 export interface Snapshot {
   interface: NetworkInterface;
+  /**
+   * 快照时刻的默认网关。core 里是 `Option<String>`，
+   * 且「未知/没取到」时 serde 会直接省略该字段（`skip_serializing_if`），
+   * 所以这里必须允许 `null` 与 `undefined`，并且**必须原样回传给 `restore`**——
+   * 少这一个字段，还原时就只还原 DNS、网关仍指向旁路由。
+   */
+  gateway?: string | null;
   dns: DnsConfig;
 }
 
