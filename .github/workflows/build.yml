@@ -13,6 +13,58 @@ permissions:
   contents: read
 
 jobs:
+  # 提交即验证：core 测试 + clippy + 前端类型检查。不产出安装包，失败即拦住。
+  # 只跑 macOS 是因为 gateshift-core 的 platform/macos.rs 用 cfg(target_os = "macos")
+  # 编译，Linux runner 上根本不会编译到它，测了等于没测。
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            gateshift-core -> target
+            src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # 顺带产出 dist/：src-tauri 的 build.rs 在编译期会检查 tauri.conf.json 指向的
+      # 前端产物是否存在，没有 dist 会直接报错，所以这里用 build 而不是单跑 tsc。
+      - name: Frontend build (type check + bundle)
+        run: npm run build
+
+      - name: Core tests
+        working-directory: gateshift-core
+        run: cargo test --features testkit --all-targets
+
+      - name: App command tests
+        working-directory: src-tauri
+        run: cargo test --features testkit --all-targets
+
+      - name: Clippy (core)
+        working-directory: gateshift-core
+        run: cargo clippy --features testkit --all-targets -- -D warnings
+
+      - name: Clippy (app)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
   build:
     strategy:
       fail-fast: false
