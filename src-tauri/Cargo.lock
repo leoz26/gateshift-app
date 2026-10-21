@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "gateshift-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gateshift-core",
  "serde",

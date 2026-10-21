@@ -1,152 +1,184 @@
-# GateShift · Tauri + React 壳
+# GateShift
 
-基于 [`gateshift-core`](https://doc.rust-lang.org/)（旁路由网关切换 + 系统 DNS 的纯逻辑核心库）的桌面壳。
-分层原则：**core 只管逻辑，Tauri 只管壳**。
+**一键把 macOS / Windows 的默认网关和系统 DNS 切到「旁路由」，用完再一键切回「主路由」。**
 
-## 结构
+家里或办公室同时有「主路由 + 旁路由（软路由）」的人应该都经历过：想走旁路由上网，就得手动打开
+「系统设置 → 网络 → 高级 → TCP/IP / DNS」改网关，用完再改回去。改错了全家断网，改漏了 DNS 又不通。
 
-```
-gateshift-app/
-├── package.json / vite.config.ts / tsconfig.json   # 前端（Vite + React + TS）
-├── src/
-│   ├── App.tsx                 # 页面编排：状态 / 切换 / 配置 / 日志
-│   ├── lib/
-│   │   ├── api.ts              # 对 Tauri invoke 的封装，每个函数对应一个后端命令
-│   │   └── types.ts            # 与 core 模型一一对应的 TS 类型
-│   ├── components/
-│   │   ├── StatusCard.tsx      # 当前接口 / 网关 / DNS / 档位
-│   │   ├── ModeSwitch.tsx      # 主路由 ↔ 旁路由 一键切换（带确认弹窗）
-│   │   ├── ConfigEditor.tsx    # 网关 + DNS 编辑（前端先做 IPv4 校验）
-│   │   └── （开机自启开关在 App.tsx 底部设置区，基于 tauri-plugin-autostart）
-│   │   └── LogView.tsx         # 操作 / 错误日志
-│   └── styles.css
-├── src-tauri/                  # Rust 侧
-│   ├── Cargo.toml              # 依赖 gateshift-core（path）+ tauri v2
-│   ├── tauri.conf.json         # 窗口 / 权限 / 打包配置
-│   ├── capabilities/default.json
-│   └── src/
-│       ├── main.rs             # 二进制入口，调用 lib::run()
-│       ├── lib.rs              # 注册 State + 命令 = invoke_handler；托盘 + 开机自启 + 单实例（tray + autostart + single-instance）
-│       ├── state.rs            # AppState：持有 NetworkManager 单例
-│       └── commands.rs         # 10 个薄命令，全部委托给 NetworkManager
-```
+GateShift 就是一个常驻菜单栏 / 托盘的小工具，把这件事变成**点一下**：
 
-├── icons/                      # 由 scripts/make-icons.mjs 生成（含 tray/ 托盘模板图）
-├── gateshift-core/             # vendoring 进来的核心库（路径依赖 ../gateshift-core）
-├── .github/workflows/build.yml # GitHub Actions：macOS + Windows 自动构建
-└── scripts/make-icons.mjs      # 图标流水线：从 scripts/*.svg 重新生成全部图标
-```
+- 点「旁路由」→ 网关和 DNS 一起指过去，走透明代理；
+- 点「主路由」→ 一起切回来，恢复直连。
 
-## 命令 ↔ core 对照
+它不代理流量、不接管网络，只做一件事：**替你改那两行系统网络设置，并且随时能改回来。**
 
-| 前端动作 | Tauri 命令 | core 方法 | 是否弹授权 |
-|---|---|---|---|
-| 读状态 | `probe` | `manager.probe()` | 否 |
-| 读配置 | `get_config` | `Config::default/load` | 否 |
-| 存配置 | `save_config` | `set_config` + 落盘 | 否 |
-| 切网关 | `switch_to` | `manager.switch_to()` | **是（一次）** |
-| 只对齐 DNS | `align_dns` | `manager.align_dns()` | 是 |
-| 恢复 DNS 自动 | `reset_dns_to_auto` | `manager.reset_dns_to_auto()` | 是 |
-| 留底 | `snapshot` | `manager.snapshot()` | 否 |
-| 还原 | `restore` | `manager.restore()` | 是（仅 DNS） |
+<!-- TODO: 主界面截图（状态卡片 + 主路由/旁路由切换 + 配置区） -->
 
-## 运行 / 构建
+## 平台支持与下载
 
-```bash
-cd gateshift-app
-npm install              # 前端依赖
-npm run tauri dev        # 开发：Vite + Rust 热重载
-npm run tauri build      # 出包：.app / .msi / .exe
-```
-
-> 核心库通过 path 依赖引入：
-> `gateshift-core = { path = "gateshift-core" }`
-> 把它换成你机器上 core 的真实路径即可。macOS / Windows 为完整可用，Linux 上 core 走 `unsupported` 占位（UI 可用、网络能力待补）。
-
-## 在 Windows 上构建与运行
-
-`gateshift-core` 对 Windows **已实测完整支持**（README 记录 Windows 11 实测通过、37 项测试；
-PowerShell `-EncodedCommand` 中文乱码、`Set-DnsClientServerAddress` 无 `-AddressFamily`、先加后删路由避免空窗期等坑都已避开），
-所以 Windows 上所有网关 / DNS 操作都是真生效的。下面是从零到跑起来的步骤。
-
-### 1. 前置依赖（一次性）
-
-| 依赖 | 装法（示例） | 说明 |
+| 平台 | 状态 | 安装包 |
 |---|---|---|
-| C++ 构建工具 (MSVC) | `winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"` | 必须含「MSVC v143」+「Windows 10/11 SDK」 |
-| Rust (stable, MSVC) | `winget install Rustlang.Rustup` → 默认就是 `stable-msvc` | `cargo` / `rustc` 可用即可 |
-| Node.js LTS (≥18) | `winget install OpenJS.NodeJS.LTS` | 提供 `npm` |
-| WebView2 运行时 | `winget install Microsoft.EdgeWebView2Runtime` | **Win11 已内置，可跳过**；Win10 需手动装，否则窗口起不来 |
+| macOS（Apple Silicon / arm64） | 支持 | `.dmg` |
+| Windows 10 / 11（x64） | 支持 | `.msi` / `.exe` |
+| Linux | 暂不支持 | — |
 
-> 可选：若 `npm run tauri` 报 PowerShell 脚本被拦截，执行一次
-> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`。
+安装包发布在 **[GitHub Releases](https://github.com/leoz26/gateshift-app/releases)**。
 
-### 2. 拿代码 & 改依赖路径（关键）
+- **macOS**：打开 `.dmg`，把 GateShift 拖进「应用程序」。当前安装包未签名 / 未公证，
+  首次启动若被 Gatekeeper 拦下，请右键 → 打开，或到「系统设置 → 隐私与安全性」里放行。
+  目前只提供 Apple Silicon 版本，Intel Mac 需要自行从源码构建。
+- **Windows**：运行 `.msi` 安装或直接跑 `.exe`。SmartScreen 可能提示「未知发布者」，
+  点「更多信息 → 仍要运行」。Windows 10 需要 WebView2 运行时（Win11 已内置）。
 
-✅ **core 已 vendoring 进本仓库**（`gateshift-core/` 目录，依赖为相对路径 `../gateshift-core`），
-仓库自包含——Windows / CI 上 clone 后**无需再改任何路径**即可构建。
-若以后你把 core 拆成独立仓库，把 `src-tauri/Cargo.toml` 里的 path 改成 git 依赖或 submodule 即可。
+## 核心功能
 
-### 3. 放置位置（避开中文 / 网络盘）
+- **一键切换主路由 / 旁路由** —— 主界面两个大按钮，点一下就把「默认网关 + 系统 DNS」整体切过去。
+  只会弹**一次**系统授权（授权细节见下方 FAQ），确认框里点「确认切换」后才会动系统。
+- **不重复打扰** —— 点你当前已经所在的档位，只会记一条「当前已处于「主路由」档位」的日志，
+  不弹确认框、也不弹系统授权；即使因为状态探测滞后而真的发起了切换，只要网关和 DNS 已经是目标值，
+  软件也会直接返回、不写系统、不弹授权。只有真正不一致的部分才会被写入。
+  （关掉「切换网关时同时设置 DNS」时，这项判断只看网关。）
+- **自定义网关与 DNS** —— 「档位配置」区里分别填主路由、旁路由的网关和 DNS：
+  - DNS 支持逗号分隔多个（如 `223.5.5.5, 8.8.8.8`），**留空表示恢复「自动（DHCP）」**；
+  - 可以取消勾选「切换网关时同时设置 DNS」，只改网关、DNS 保持原样；
+  - 保存前会做 IPv4 校验，两个档位的网关不能填同一个（否则无法判断当前在哪个档位）。
+- **留底与还原** —— 切换前点一下「留底」，记下当前的网卡、网关和系统 DNS；之后随时点「还原留底」，
+  把网关和 DNS 一起写回留底时的值（合并成一次授权）。
+  如果留底之后默认网卡变了（比如拔了网线切到 Wi-Fi），还原会被拒绝并提示，避免把设置写到错的网卡上。
+- **退出时自动还原** —— 可开关的一项保险：开启后，从托盘菜单退出时若当前不在主路由，会自动切回主路由（弹一次授权）；
+  已经是主路由则直接退出，不打扰你。默认关闭，需要自己打开。
+- **托盘常驻** —— 关窗口不会退出程序，只是隐藏到托盘，随叫随到：
+  - 左键单击 / 双击托盘图标 = 显示或隐藏窗口（macOS 隐藏时 Dock 图标一并收起）；
+  - 右键 = 菜单「显示主窗口」/「退出 GateShift」；
+  - 直接关窗（macOS 上 Cmd+Q 也一样）只会隐藏到托盘，**真正退出请用托盘菜单的「退出 GateShift」**。
+- **开机自启** —— 一个开关，登录系统后在后台静默驻留托盘，不弹窗。仅在打包后的应用里可用。
+- **实时探测当前状态** —— 启动时、点「刷新」时、切回窗口时自动探测，展示当前接口名、网关、DNS 和所处档位，
+  所以你随时知道「现在到底走哪条路由」。
+- **只动 DNS 的两个救急按钮** —— 「只对齐 DNS」（不改网关，按当前档位重设 DNS）和
+  「恢复 DNS 为自动」（清掉手动 DNS，交回 DHCP），用于上网正常但域名解析不对的场景。
+- **单实例** —— 已经在托盘里运行时再双击图标，只会把已有窗口唤到前台，不会开出第二个进程。
+- **操作日志** —— 界面底部有本次运行的操作 / 错误日志，切换成功、取消授权、失败原因都能看到。
 
-把 `gateshift-app` 源码目录放到**纯 ASCII、本地盘**路径，例如 `C:\work\gateshift-app`。
-Tauri / core 的 C++ 与 Rust 工具链都怕中文、空格、网络盘路径（core README 里 MinGW `ld` 的坑同样会咬 MSVC 构建）。
+## 使用方式
 
-> **不要跨平台拷贝 `node_modules` 和 `src-tauri/target`**——它们含平台专属二进制，拷过去只会报错。
-> 只拷源码目录，到 Windows 上重新 `npm install` + `cargo build` 即可（这俩目录已在 `.gitignore`）。
+### 1. 首次使用：填好两个档位
 
-### 4. 安装 & 运行
+在「档位配置」里填两个 IP：
 
-```powershell
-cd C:\work\gateshift-app
-npm install                       # 若用 npm 11/12，需先批准安装脚本：
-npm install-scripts approve esbuild   # （fsevents 是 macOS only，Windows 不装）
-npm run tauri dev                # 开发预览
-npm run tauri build              # 出包：.msi / .exe，在 src-tauri\target\release\bundle\
-```
+| | 网关 | DNS |
+|---|---|---|
+| 主路由 | 你家主路由的地址，如 `192.168.1.1` | 留空（自动）或填公共 DNS |
+| 旁路由 | 旁路由 / 软路由的地址，如 `192.168.1.11` | 通常填旁路由自己的地址 |
 
-### 5. Windows 专属注意
+点「保存配置」。配置会写到系统配置目录
+（macOS `~/Library/Application Support/gateshift/config.json`，Windows `%APPDATA%\gateshift\config.json`），
+重启软件后自动读回。
 
-- **UAC 授权**：切网关 / 对齐 DNS 会弹一次 UAC（core 用 `Start-Process -Verb RunAs`）。
-  点「是」继续执行；点「否」会被 core 识别为「取消」，界面提示「未做任何修改」，不会报错。
-- **签名**：正式分发建议配代码签名证书，否则 SmartScreen 拦截、UAC 提示更吓人。
-  自己开发自测可先不签名（`tauri build` 默认或加 `--debug` 都能跑）。
-- **crates.io 不通**：若被旁路由 fake-IP 接管导致 `cargo build` 拉不到依赖，在 `.cargo/config.toml` 配 ustc 等镜像（core 已带示例）。
+### 2. 想走旁路由时
 
-## 托盘 / 驻留
+点「旁路由」卡片 → 确认框里点「确认切换」→ 系统弹出 Touch ID / 密码 / UAC，允许。
+几秒后状态卡片上的档位会变成「旁路由」，网关和 DNS 同步变成旁路由的值。
 
-- **托盘图标**：macOS 用 22pt 单色模板图（`icons/tray/tray-22.png`，系统自动按菜单栏明暗反色），
-  Windows 用 32px（`tray-32.png`）；编译期 `include_bytes!` 嵌进二进制。
-- **交互**：左键点托盘 = 显示/隐藏主窗口；右键 = 菜单（显示主窗口 / 退出 GateShift）。
-- **关窗 ≠ 退出**：点红色关闭按钮只是隐藏到托盘，应用驻留后台（方便随时切网关）；
-  真正退出走托盘菜单。
+### 3. 用完了，切回主路由
 
-## GitHub Actions 自动构建
+点「主路由」卡片 → 确认切换 → 授权。状态回到「主路由」，网络恢复直连。
 
-推送到 `main`/`master` 后，`.github/workflows/build.yml` 会自动在 macOS + Windows 上构建，
-并把产物（`.dmg` / `.app` / `.msi` / `.exe`）上传为 Actions artifact，无需任何本机构建。
-也可在 Actions 页面手动 Run workflow 触发。
+> 这就是主流程：**切过去 → 用完切回来**。不需要再进系统设置，也不会忘记改回来。
 
-- **签名**：默认产出未签名包（自测够用）。要正式分发，在仓库 Secrets 配好证书后，
-  取消 workflow 里 macOS 签名相关 env 的注释即可。
-- **注意**：`tauri.conf.json` 里 `bundle > createUpdaterArtifacts` 未开启时，
-  `TAURI_SIGNING_PRIVATE_KEY` 这两个 env 可留空，不影响普通构建。
+### 4. 「留底」是干什么的
 
-## 测试
+如果你在切换**之前**点过「留底」，软件会记住当时的网卡、网关和系统 DNS。
+之后不管网络被你或别的软件改成了什么样，点「还原留底」就能把网关和 DNS 一起恢复到那个状态——
+它是一张「改坏了也能回退」的底牌，和「切回主路由」互补：
 
-- core 自身的 `testkit` 已通过 `gateshift-core` 的 `testkit` feature 复用。
-- 应用命令层也接了它：`commands.rs` 末尾有一个集成测试（`switch_to` 命令确实只触发一次 apply），
-  需要开启 app 的 `testkit` feature 才编译运行：
+- **还原留底**：把网关和系统 DNS 一起恢复成你留底时的样子（一次授权写完两者）；
+- **切回主路由**：把网关和 DNS 一起切回主路由档位。
+
+两者互补：日常「切回去」用主路由按钮就够了；只有当你想回到「某个特定的网络状态」
+（比如留底时用的是公司内网 DNS 和另一台网关）时，才需要用到还原留底。
+
+> 边界情况：极少数时候留底那一刻读不到网关（比如探测异常），这次留底就只含 DNS，
+> 还原时也只写 DNS、不动网关。留底成功的日志里会写出记下的接口、网关和 DNS，方便你核对。
+
+## 模式说明
+
+GateShift 用**当前默认网关**来判断你处在哪个档位，只认三个值：
+
+| 档位 | 含义 |
+|---|---|
+| **主路由** | 默认网关 = 配置里「主路由」的网关。直连，不走代理。 |
+| **旁路由** | 默认网关 = 配置里「旁路由」的网关。流量交给旁路由处理。 |
+| **未知** | 当前网关既不等于主路由也不等于旁路由（例如连了别的网络、开了 VPN 改了默认路由、网卡刚切换）。此时点两个档位按钮仍可切换，但「只对齐 DNS」会拒绝执行，因为不知道该用哪套 DNS。 |
+
+## FAQ
+
+**Q：为什么每次切换都要输入管理员密码？**
+改默认网关和系统 DNS 都是系统级设置：macOS 上需要 root 权限，Windows 上需要管理员权限。
+GateShift 会把「改网关 + 改 DNS + 刷新 DNS 缓存」合并成**一次**提权执行，所以一次切换只弹一次授权，
+不会连环弹窗。你在授权框里点取消，程序不会做任何修改，日志里会显示「已取消授权，未做任何修改」。
+
+**Q：GateShift 会保存我的密码吗？**
+不会。授权由系统自己完成（macOS 的系统密码 / Touch ID 弹窗、Windows 的 UAC），
+GateShift 从头到尾拿不到也存不下你的密码。
+
+**Q：Mac 上授权过一次，之后一段时间不再询问，正常吗？**
+正常，这是 macOS 自身的提权缓存行为：`osascript` 提权成功后的短时间内（通常几分钟内）再提权会复用上一次授权，
+不再弹窗。这不是 GateShift 记住了密码，是系统在这么做。
+
+**Q：切换后上不了网，怎么回滚？**
+
+1. 点状态卡片上的「刷新」看看档位有没有真的切过去；
+2. 点「主路由」→ 确认切换 → 授权，等状态卡片回到「主路由」；
+3. 能 ping 通 IP、却打不开网页，通常是 DNS 没对：点「恢复 DNS 为自动」或「只对齐 DNS」；
+4. 之前留过底的话，点「还原留底」把网关和 DNS 一起恢复成留底时的值；
+5. 极端情况下（比如软件被强杀、授权失败），直接进系统网络设置手动改回网关 / DNS；Windows 上重启后 DHCP 也会把默认路由恢复原状。
+
+**Q：留底会记下什么？**
+记下当时的「网卡 + 默认网关 + 系统 DNS」三项，点「还原留底」会把网关和 DNS 一起写回（合并成一次授权）。
+唯一例外是留底那一刻网关读不到（探测异常），这次留底就只含 DNS，还原时也只写 DNS、不动网关。
+
+**Q：关机前忘了切回去，下次开机还是走旁路由吗？**
+- 开启「退出时还原主路由」的情况下，从托盘菜单正常退出会自动切回主路由；
+- macOS 上改的网关是运行期的，重启后会回到 DHCP 分配的状态；
+- 如果软件是被强杀或崩溃退出的，退出还原不会执行——请手动点「主路由」切回。
+
+**Q：开机自启开关显示「当前环境不可用」？**
+开机自启依赖系统级的自启注册（macOS 的 LaunchAgent / Windows 的启动项），在开发模式
+（`npm run tauri dev`）下不可用，请使用打包后的 `.app` / `.msi`。
+
+**Q：双网卡 / VPN 环境能用吗？**
+双网卡（同时插网线 + 连 Wi-Fi）可以正常用：切换只作用于「当前默认路由所在的那张网卡」，不会动其它网卡的默认路由。
+开着 VPN 时要留意：VPN 会改写默认路由，此时状态可能探测成「未知」，切换前先看一眼状态卡片上的接口是不是你要的那张。
+
+## 已知限制
+
+- **只支持 IPv4**：网关和 DNS 都只处理 IPv4 地址（IPv6 DNS 会填不进去）。
+- **只操作当前默认网卡**：软件自动跟随「当前默认路由所在的接口」，界面上没有「选择网卡」的入口。
+  切换与还原只改这张网卡的默认路由和 DNS，不会删除或改动其它网卡的默认路由。
+- **开着 VPN 时探测可能失败**：VPN 改变默认路由后，当前档位可能被判为「未知」，此时「只对齐 DNS」会拒绝执行。
+  建议先断开 VPN 或手动点「刷新」确认接口后再切换。
+- **留底不落盘**：留底只保存在本次运行的内存里，软件退出后需要重新留底。
+- **macOS 只有 arm64 安装包**：Intel Mac 需自行从源码构建。
+- **安装包未签名 / 未公证**：首次启动可能被 Gatekeeper / SmartScreen 拦截，按上文说明放行即可。
+
+## 从源码构建
+
+需要 Node.js ≥ 18、Rust stable，以及各平台的构建工具链（macOS 需 Xcode Command Line Tools；
+Windows 需 MSVC 生成工具 + WebView2 运行时）。
 
 ```bash
-cd src-tauri
-cargo test --features testkit
+git clone https://github.com/leoz26/gateshift-app.git
+cd gateshift-app
+npm install
+npm run tauri dev     # 开发预览
+npm run tauri build   # 出包，产物在 src-tauri/target/release/bundle/
 ```
 
-## 平台注意
+核心逻辑库 `gateshift-core/` 已随仓库一起提供（相对路径依赖），克隆后无需修改任何依赖路径。
+前端（React）只负责界面与交互，网关 / DNS 的实际读写全部通过 IPC 调用 `gateshift-core` 的纯逻辑层完成。
 
-- **macOS**：`tauri build` 需要开发者签名 + Notarization，否则 Gatekeeper 拦截（CI 产物下载后
-  首次打开需右键 → 打开，或在「系统设置 → 隐私与安全性」里放行）。
-- **Windows**：完整可用，详见上方「在 Windows 上构建与运行」。要点：配 MSVC 构建工具 + WebView2、
-  放纯 ASCII 本地盘、自测可暂不签名（core 路径已 vendoring，无需再改）。
-- 若 crates.io 直连不通（例如被旁路由 fake-IP 接管），可在 `.cargo/config.toml` 配置 ustc 等镜像。
+## License
+
+MIT。核心逻辑库 `gateshift-core` 在 `Cargo.toml` 中声明为 `MIT`。
+
+<!-- TODO: 仓库目前没有 LICENSE 文件，正式发布前请补一份 MIT LICENSE 全文。 -->
