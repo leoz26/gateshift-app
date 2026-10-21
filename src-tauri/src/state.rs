@@ -27,6 +27,10 @@ impl AppState {
 #[cfg(any(test, feature = "testkit"))]
 impl AppState {
     /// 测试 / 命令层集成测试专用：直接用给定 manager 构造，绕过真实平台初始化与配置加载。
+    ///
+    /// 只在带 `testkit` feature 的测试里真的被调用；其它 cfg 组合下它没有调用方，
+    /// 所以显式允许 dead_code，避免 `cargo clippy --all-targets` 报假警告。
+    #[cfg_attr(not(all(test, feature = "testkit")), allow(dead_code))]
     pub(crate) fn with_manager(manager: NetworkManager) -> Self {
         AppState {
             manager: Mutex::new(manager),

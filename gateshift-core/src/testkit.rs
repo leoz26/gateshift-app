@@ -12,7 +12,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::error::Result;
-use crate::model::{DnsConfig, NetworkInterface};
+use crate::model::{DnsConfig, GatewayAndDns, NetworkInterface};
 use crate::platform::NetworkPlatform;
 
 /// 一次平台操作的记录，用于断言。
@@ -53,6 +53,9 @@ pub struct MockState {
     pub interface: NetworkInterface,
     pub gateway: Option<String>,
     pub dns: Vec<String>,
+    /// 模拟「这个接口的 DNS 读不到」（VPN / `utun*` 场景）：探测时降级成空列表，
+    /// `NetworkState::dns_readable = false`。默认 `true`。
+    pub dns_readable: bool,
     pub calls: Vec<Call>,
     // 脚本化错误：返回一次后清空（one-shot）。`None` 表示正常执行。
     pub err_on_list: Option<crate::error::Error>,
@@ -76,6 +79,7 @@ impl Default for MockState {
             },
             gateway: None,
             dns: Vec::new(),
+            dns_readable: true,
             calls: Vec::new(),
             err_on_list: None,
             err_on_default: None,
@@ -199,6 +203,19 @@ impl NetworkPlatform for MockPlatform {
         Ok(DnsConfig::new(st.dns.clone()))
     }
 
+    /// 默认实现会分别调用 `get_gateway` / `get_dns`；这里覆写只为带上 `dns_readable` 标记
+    /// （模拟 VPN 接口「DNS 读不到」）。调用记录与默认实现完全一致。
+    fn get_gateway_and_dns(&self, interface: &NetworkInterface) -> Result<GatewayAndDns> {
+        let gateway = self.get_gateway(interface)?;
+        let dns = self.get_dns(interface)?;
+        let readable = self.state.lock().unwrap().dns_readable;
+        Ok(if readable {
+            GatewayAndDns::read(gateway, dns)
+        } else {
+            GatewayAndDns::dns_unreadable(gateway)
+        })
+    }
+
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()> {
         let mut st = self.state.lock().unwrap();
         if let Some(e) = st.err_on_set_dns.take() {
@@ -272,6 +289,11 @@ impl MockHandle {
         self.state.lock().unwrap().dns.clone()
     }
 
+    /// 模拟的「DNS 是否可读」标记。
+    pub fn dns_readable(&self) -> bool {
+        self.state.lock().unwrap().dns_readable
+    }
+
     /// 全部调用记录（按时间顺序）。
     pub fn calls(&self) -> Vec<Call> {
         self.state.lock().unwrap().calls.clone()
@@ -317,6 +339,13 @@ impl MockBuilder {
 
     pub fn dns(mut self, dns: &[&str]) -> Self {
         self.state.dns = dns.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// 模拟「这个接口的 DNS 读不到」（VPN / `utun*`）：探测返回空 DNS + `dns_readable = false`。
+    pub fn dns_unreadable(mut self) -> Self {
+        self.state.dns_readable = false;
+        self.state.dns.clear();
         self
     }
 

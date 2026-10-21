@@ -10,7 +10,7 @@ use std::os::windows::process::CommandExt;
 use super::windows_scripts as scripts;
 use super::{powershell, NetworkPlatform};
 use crate::error::{stderr_or_placeholder, Error, Result};
-use crate::model::{DnsConfig, NetworkInterface};
+use crate::model::{DnsConfig, GatewayAndDns, NetworkInterface};
 use crate::util::is_ipv4;
 
 pub struct WindowsPlatform;
@@ -149,7 +149,7 @@ impl NetworkPlatform for WindowsPlatform {
     fn get_gateway_and_dns(
         &self,
         interface: &NetworkInterface,
-    ) -> Result<(Option<String>, DnsConfig)> {
+    ) -> Result<GatewayAndDns> {
         let index = Self::index_of(interface)?;
         let script = format!(
             "Write-Output '===GATEWAY==='\n{}\nWrite-Output '===DNS==='\n{}",
@@ -178,7 +178,9 @@ impl NetworkPlatform for WindowsPlatform {
             })
             .unwrap_or_default();
 
-        Ok((gateway, DnsConfig::new(dns)))
+        // Windows 上取 DNS 是查 WMI/CIM，网卡存在就能读到，
+        // 不存在的话上面 index_of 已经报错了 —— 所以这里恒为「读到了」。
+        Ok(GatewayAndDns::read(gateway, DnsConfig::new(dns)))
     }
 
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()> {

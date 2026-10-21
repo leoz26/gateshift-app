@@ -46,16 +46,19 @@ if ($r) { Write-Output $r.NextHop }
 /// **先加新路由、再摘旧路由** —— 顺序反了会出现「短暂没有默认路由」的空窗，
 /// 那一刻正好在跑的东西会直接断网。
 ///
+/// 每一步都限定 `-InterfaceIndex $idx`：双网卡 / VPN 同时存在时会同时存在多条
+/// `0.0.0.0/0` 路由，不加限定就会把别的网卡的默认路由一起删掉（用户直接断网）。
+///
 /// `-PolicyStore ActiveStore` = 只在当前生效，重启后回到 DHCP 给的原状
 /// （跟 macOS 的 `route` 行为对齐）。想常驻就去掉这个参数。
 pub const SET_GATEWAY: &str = r#"
 $gw  = '__GATEWAY__'
 $idx = __INDEX__
-$existing = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
+$existing = @(Get-NetRoute -AddressFamily IPv4 -InterfaceIndex $idx -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)
 if (@($existing | Where-Object { $_.NextHop -eq $gw }).Count -eq 0) {
     New-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $idx -NextHop $gw -PolicyStore ActiveStore | Out-Null
 }
-$existing | Where-Object { $_.NextHop -ne $gw } | Remove-NetRoute -Confirm:$false | Out-Null
+$existing | Where-Object { $_.NextHop -ne $gw } | Remove-NetRoute -InterfaceIndex $idx -PolicyStore ActiveStore -Confirm:$false | Out-Null
 "#;
 
 pub const GET_DNS: &str = r#"
@@ -165,6 +168,37 @@ mod tests {
     fn set_gateway_is_not_persistent() {
         let script = set_gateway_script(12, "192.168.1.11").unwrap();
         assert!(script.contains("-PolicyStore ActiveStore"));
+    }
+
+    #[test]
+    fn set_gateway_scopes_every_route_command_to_its_interface() {
+        // 回归测试：不加 -InterfaceIndex 时，双网卡 / VPN 场景下会把别家网卡的
+        // 默认路由一起删掉（用户直接断网）
+        let script = set_gateway_script(12, "192.168.1.11").unwrap();
+        for line in script.lines() {
+            if ["Get-NetRoute", "New-NetRoute", "Remove-NetRoute"]
+                .iter()
+                .any(|cmd| line.contains(cmd))
+            {
+                assert!(
+                    line.contains("-InterfaceIndex $idx"),
+                    "路由命令必须限定网卡：{}",
+                    line.trim()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_gateway_removal_only_touches_active_store() {
+        let script = set_gateway_script(12, "192.168.1.11").unwrap();
+        let removal = script
+            .lines()
+            .find(|l| l.contains("Remove-NetRoute"))
+            .expect("必须有 Remove-NetRoute");
+        assert!(removal.contains("-InterfaceIndex $idx"), "{}", removal);
+        assert!(removal.contains("-PolicyStore ActiveStore"), "{}", removal);
+        assert!(removal.contains("-Confirm:$false"), "{}", removal);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! 平台实现。业务逻辑只依赖 [`NetworkPlatform`]，各平台差异全部隔离在自己的文件里。
 
 use crate::error::Result;
-use crate::model::{DnsConfig, NetworkInterface};
+use crate::model::{DnsConfig, GatewayAndDns, NetworkInterface};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -28,7 +28,15 @@ mod windows_scripts;
 
 /// 当前平台的默认实现。
 pub fn default_platform() -> Box<dyn NetworkPlatform> {
-    Box::new(Platform)
+    // macOS 实现带 TTL 缓存，需要构造实例（其它平台是单位结构体字面量）
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(Platform::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Box::new(Platform)
+    }
 }
 
 /// 平台相关操作的统一抽象。
@@ -53,13 +61,19 @@ pub trait NetworkPlatform: Send + Sync {
     /// 读取该接口的 IPv4 DNS；空列表表示「自动（DHCP）」。
     fn get_dns(&self, interface: &NetworkInterface) -> Result<DnsConfig>;
 
-    /// 一次性读出「网关 + DNS」。默认实现退化为分别调用两个接口；
-    /// Windows 平台覆写为**一次** PowerShell，减少进程数与卡顿（见 `windows.rs`）。
-    fn get_gateway_and_dns(
-        &self,
-        interface: &NetworkInterface,
-    ) -> Result<(Option<String>, DnsConfig)> {
-        Ok((self.get_gateway(interface)?, self.get_dns(interface)?))
+    /// 一次性读出「网关 + DNS」，并报告 DNS 是否真的读到了。
+    ///
+    /// 默认实现退化为分别调用两个接口；Windows 平台覆写为**一次** PowerShell，
+    /// 减少进程数与卡顿（见 `windows.rs`）；macOS 覆写为一次 `route` + 降级处理
+    /// （见 `macos.rs`）。
+    ///
+    /// 默认实现里 DNS 读不到就整体报错；只有明确知道「这个接口的 DNS 不受系统管理」
+    /// 的平台才可以降级成 [`GatewayAndDns::dns_unreadable`]。
+    fn get_gateway_and_dns(&self, interface: &NetworkInterface) -> Result<GatewayAndDns> {
+        Ok(GatewayAndDns::read(
+            self.get_gateway(interface)?,
+            self.get_dns(interface)?,
+        ))
     }
 
     /// 设置该接口的 IPv4 DNS；`dns` 为空表示恢复「自动（DHCP）」。

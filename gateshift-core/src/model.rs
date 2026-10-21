@@ -89,6 +89,54 @@ pub struct NetworkState {
     pub gateway: Option<String>,
     pub dns: DnsConfig,
     pub mode: RouterMode,
+    /// DNS 是否**真的读到了**。
+    ///
+    /// `false` 表示 `dns` 只是占位空列表（读不到），典型场景是 VPN 的 `utun*` 接口：
+    /// 它没有对应的网络服务，`networksetup -getdnsservers` 必然失败，而这类接口的 DNS
+    /// 也不受系统管理。此时「DNS 是空的（= 自动）」和「DNS 读不到」在数据上同形，
+    /// 靠这个标志区分：前者可以照常比对 / 改写，后者不该去碰。
+    ///
+    /// 旧数据 / 旧前端没有这个字段时按 `true` 处理（见 `default_dns_readable`）。
+    #[serde(default = "default_dns_readable")]
+    pub dns_readable: bool,
+}
+
+/// `dns_readable` 的默认值：老数据里没有这个字段，按「读到了」处理，保持旧行为。
+fn default_dns_readable() -> bool {
+    true
+}
+
+/// 一次平台探测的原始结果：网关 + DNS + DNS 是否读到。
+///
+/// 单独用个结构体（而不是 `(Option<String>, DnsConfig)` 二元组）是为了让
+/// 「DNS 读不到 → 降级成空列表」这件事能一路传到 [`NetworkState`]，
+/// 上层据此决定「跳过 DNS 写入」还是「明确报错」。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayAndDns {
+    pub gateway: Option<String>,
+    pub dns: DnsConfig,
+    /// DNS 是否真的读到了。`false` 时 `dns` 是不可信的占位空列表。
+    pub dns_readable: bool,
+}
+
+impl GatewayAndDns {
+    /// 正常读到网关与 DNS。
+    pub fn read(gateway: Option<String>, dns: DnsConfig) -> Self {
+        GatewayAndDns {
+            gateway,
+            dns,
+            dns_readable: true,
+        }
+    }
+
+    /// 网关读到了，但 DNS 读不到（已降级成空列表）。
+    pub fn dns_unreadable(gateway: Option<String>) -> Self {
+        GatewayAndDns {
+            gateway,
+            dns: DnsConfig::default(),
+            dns_readable: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -132,5 +180,38 @@ mod tests {
             is_default: true,
         };
         assert_eq!(win.describe(), "index=7");
+    }
+
+    #[test]
+    fn dns_readable_defaults_to_true_for_old_payloads() {
+        // 老版本序列化出来的 NetworkState 没有 dns_readable 字段，
+        // 反序列化时不能炸，也不能默认成「读不到」（那会让旧数据被当成不可管理）
+        let old = r#"{
+            "interface": {"name": "Wi-Fi", "is_default": true},
+            "gateway": "192.168.1.1",
+            "dns": {"ipv4": ["223.5.5.5"]},
+            "mode": "main_router"
+        }"#;
+        let state: NetworkState = serde_json::from_str(old).unwrap();
+        assert!(state.dns_readable);
+        assert_eq!(state.dns.ipv4, vec!["223.5.5.5".to_string()]);
+
+        // 新数据明确带上这个字段时按实际值来
+        let state = NetworkState {
+            interface: NetworkInterface {
+                name: "utun3".into(),
+                index: None,
+                device: Some("utun3".into()),
+                is_default: true,
+            },
+            gateway: Some("10.8.0.1".into()),
+            dns: DnsConfig::default(),
+            mode: RouterMode::Unknown,
+            dns_readable: false,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"dns_readable\":false"), "{}", json);
+        let round: NetworkState = serde_json::from_str(&json).unwrap();
+        assert!(!round.dns_readable);
     }
 }
