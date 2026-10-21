@@ -18,15 +18,16 @@ GateShift 就是一个常驻菜单栏 / 托盘的小工具，把这件事变成*
 
 | 平台 | 状态 | 安装包 |
 |---|---|---|
-| macOS（Apple Silicon / arm64） | 支持 | `.dmg` |
+| macOS（Apple Silicon / Intel 通用） | 支持 | `.dmg`（universal 二进制） |
 | Windows 10 / 11（x64） | 支持 | `.msi` / `.exe` |
+| Windows 10 / 11（x86 32 位） | 支持 | `.msi` / `.exe` |
 | Linux | 暂不支持 | — |
 
 安装包发布在 **[GitHub Releases](https://github.com/leoz26/gateshift-app/releases)**。
 
 - **macOS**：打开 `.dmg`，把 GateShift 拖进「应用程序」。当前安装包未签名 / 未公证，
   首次启动若被 Gatekeeper 拦下，请右键 → 打开，或到「系统设置 → 隐私与安全性」里放行。
-  目前只提供 Apple Silicon 版本，Intel Mac 需要自行从源码构建。
+  macOS 安装包是 universal 二进制，Apple Silicon 与 Intel Mac 通用。
 - **Windows**：运行 `.msi` 安装或直接跑 `.exe`。SmartScreen 可能提示「未知发布者」，
   点「更多信息 → 仍要运行」。Windows 10 需要 WebView2 运行时（Win11 已内置）。
 
@@ -155,10 +156,10 @@ GateShift 从头到尾拿不到也存不下你的密码。
 - **只支持 IPv4**：网关和 DNS 都只处理 IPv4 地址（IPv6 DNS 会填不进去）。
 - **只操作当前默认网卡**：软件自动跟随「当前默认路由所在的接口」，界面上没有「选择网卡」的入口。
   切换与还原只改这张网卡的默认路由和 DNS，不会删除或改动其它网卡的默认路由。
-- **开着 VPN 时探测可能失败**：VPN 改变默认路由后，当前档位可能被判为「未知」，此时「只对齐 DNS」会拒绝执行。
-  建议先断开 VPN 或手动点「刷新」确认接口后再切换。
+- **开着 VPN 时**：VPN 会改变默认路由，当前档位可能被判为「未知」；若接口变成 `utun*` 这类不归系统管的设备，
+  DNS 会读不到也改不了，界面显示「不受管理」并禁用「只对齐 DNS」「恢复 DNS 为自动」。
+  **切换档位仍然可用**（只改网关，跳过 DNS）。需要改 DNS 时请先断开 VPN。
 - **留底不落盘**：留底只保存在本次运行的内存里，软件退出后需要重新留底。
-- **macOS 只有 arm64 安装包**：Intel Mac 需自行从源码构建。
 - **安装包未签名 / 未公证**：首次启动可能被 Gatekeeper / SmartScreen 拦截，按上文说明放行即可。
 
 ## 从源码构建
