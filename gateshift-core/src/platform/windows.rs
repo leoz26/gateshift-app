@@ -173,7 +173,7 @@ impl NetworkPlatform for WindowsPlatform {
 
         // Windows 上取 DNS 是查 WMI/CIM，网卡存在就能读到，
         // 不存在的话上面 index_of 已经报错了 —— 所以这里恒为「读到了」。
-        Ok(GatewayAndDns::read(gateway, DnsConfig::new(dns)))
+        Ok(GatewayAndDns::read(gateway, dns))
     }
 
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()> {
