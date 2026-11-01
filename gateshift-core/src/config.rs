@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::model::RouterMode;
-use crate::util::is_ipv4;
+use crate::util::{is_ipv4, is_ipv6};
 
 /// 一个档位：网关 + 该档位要用的 DNS。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +21,9 @@ pub struct RouterProfile {
     /// 该档位要设置的系统 DNS；空数组表示恢复「自动（DHCP）」。
     #[serde(default)]
     pub dns: Vec<String>,
+    /// 该档位要设置的 IPv6 DNS；旧配置文件没有此字段，按空数组加载（= 不设置 IPv6 DNS）。
+    #[serde(default)]
+    pub dns_ipv6: Vec<String>,
 }
 
 impl RouterProfile {
@@ -29,6 +32,22 @@ impl RouterProfile {
             name: name.into(),
             gateway: gateway.into(),
             dns,
+            dns_ipv6: Vec::new(),
+        }
+    }
+
+    /// 带 IPv6 DNS 的构造器；IPv4 侧仍走 [`RouterProfile::new`]。
+    pub fn with_ipv6(
+        name: impl Into<String>,
+        gateway: impl Into<String>,
+        dns: Vec<String>,
+        dns_ipv6: Vec<String>,
+    ) -> Self {
+        RouterProfile {
+            name: name.into(),
+            gateway: gateway.into(),
+            dns,
+            dns_ipv6,
         }
     }
 
@@ -40,12 +59,17 @@ impl RouterProfile {
         }
     }
 
-    /// DNS 的展示文本；空列表 = 自动（DHCP）。
+    /// DNS 的展示文本；空列表 = 自动（DHCP）。IPv6 有值时换行拼接在后面。
     pub fn dns_text(&self) -> String {
-        if self.dns.is_empty() {
+        let v4 = if self.dns.is_empty() {
             "自动（DHCP）".to_string()
         } else {
             self.dns.join(", ")
+        };
+        if self.dns_ipv6.is_empty() {
+            v4
+        } else {
+            format!("{}\nIPv6: {}", v4, self.dns_ipv6.join(", "))
         }
     }
 
@@ -59,7 +83,15 @@ impl RouterProfile {
         for d in &self.dns {
             if !is_ipv4(d) {
                 return Err(Error::InvalidConfig(format!(
-                    "{}DNS「{}」不是合法的 IPv4 地址（当前只支持 IPv4）",
+                    "{}DNS「{}」不是合法的 IPv4 地址",
+                    label, d
+                )));
+            }
+        }
+        for d in &self.dns_ipv6 {
+            if !is_ipv6(d) {
+                return Err(Error::InvalidConfig(format!(
+                    "{}IPv6 DNS「{}」不是合法的 IPv6 地址",
                     label, d
                 )));
             }
@@ -277,5 +309,55 @@ mod tests {
         );
         assert_eq!(c.mode_of(Some("10.0.0.1")), RouterMode::Unknown);
         assert_eq!(c.mode_of(None), RouterMode::Unknown);
+    }
+
+    #[test]
+    fn rejects_invalid_ipv6_dns() {
+        let mut c = Config::default();
+        c.main_router.dns_ipv6 = vec!["2400:3200:::1".into()];
+        assert!(matches!(c.validate(), Err(Error::InvalidConfig(_))));
+        c.main_router.dns_ipv6 = vec!["fe80::1".into()];
+        c.validate().unwrap();
+    }
+
+    #[test]
+    fn ipv6_dns_defaults_to_empty_for_old_config() {
+        // 旧配置 JSON 没有 dns_ipv6 字段，必须按空数组加载，不能炸
+        let text = r#"{
+            "main_router": {
+                "name": "主路由",
+                "gateway": "10.0.0.1",
+                "dns": ["223.5.5.5"]
+            },
+            "bypass_router": { "gateway": "10.0.0.2" }
+        }"#;
+        let c = Config::parse(Path::new("config.json"), text).unwrap();
+        assert!(c.main_router.dns_ipv6.is_empty());
+        c.validate().unwrap();
+    }
+
+    #[test]
+    fn ipv6_dns_roundtrip_and_text() {
+        let c = Config {
+            main_router: RouterProfile::with_ipv6(
+                "主路由",
+                "10.0.0.1",
+                vec!["223.5.5.5".into()],
+                vec!["2400:3200::1".into(), "2400:3200::2".into()],
+            ),
+            ..Config::default()
+        };
+        c.validate().unwrap();
+        let back: Config = serde_json::from_str(&serde_json::to_string_pretty(&c).unwrap()).unwrap();
+        assert_eq!(c, back);
+        assert_eq!(
+            c.main_router.dns_text(),
+            "223.5.5.5\nIPv6: 2400:3200::1, 2400:3200::2"
+        );
+        // 只有 IPv6 没有 IPv4 时，IPv4 侧仍显示「自动（DHCP）」
+        let only6 = RouterProfile::with_ipv6("旁路由", "10.0.0.2", Vec::new(), vec!["::1".into()]);
+        assert_eq!(only6.dns_text(), "自动（DHCP）\nIPv6: ::1");
+        // 空 dns_ipv6 时不带 IPv6 后缀
+        assert_eq!(RouterProfile::new("x", "10.0.0.3", Vec::new()).dns_text(), "自动（DHCP）");
     }
 }

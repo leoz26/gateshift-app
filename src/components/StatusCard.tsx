@@ -55,12 +55,17 @@ export default function StatusCard({
   // 「读不到 DNS」和「DNS 真的是自动(DHCP)」是两件事：
   // dns_readable === false 时 dns.ipv4 只是占位空列表，显示成「自动」会误导。
   const dnsUnreadable = state.dns_readable === false;
-  const isAuto = !dnsUnreadable && state.dns.ipv4.length === 0;
+  // v6 是新加的可选字段：旧后端不带它，缺省按空数组（无 IPv6 DNS）处理。
+  const ipv6 = state.dns.ipv6 ?? [];
+  const isAuto = !dnsUnreadable && state.dns.ipv4.length === 0 && ipv6.length === 0;
   const dns = dnsUnreadable
     ? "不受管理"
     : isAuto
       ? "自动（DHCP）"
-      : state.dns.ipv4.join(", ");
+      : // v6 有值时另起一行，v4/v6 混在一行容易看成一条地址
+        ipv6.length > 0
+        ? `${state.dns.ipv4.join(", ")}\nIPv6: ${ipv6.join(", ")}`
+        : state.dns.ipv4.join(", ");
 
   return (
     <section className={`card card--status card--status-${state.mode}`}>
@@ -97,6 +102,8 @@ export default function StatusCard({
             className={`mono ${isAuto ? "status__value--auto" : ""} ${
               dnsUnreadable ? "status__value--muted" : ""
             }`}
+            // v6 有值时 DNS 里带换行，这里让它真实换行显示
+            style={dns.includes("\n") ? { whiteSpace: "pre-wrap" } : undefined}
             title={
               dnsUnreadable
                 ? "当前接口的 DNS 不受系统管理（常见于 VPN 连接期间），既读不到也改不了"
@@ -105,6 +112,7 @@ export default function StatusCard({
           >
             {dns}
           </dd>
+
         </div>
         <div className="status__item">
           <dt>

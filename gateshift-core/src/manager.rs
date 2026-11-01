@@ -203,11 +203,11 @@ impl NetworkManager {
                 actual: current.name,
             });
         }
-        self.platform.apply(
-            &current,
-            snapshot.gateway.as_deref(),
-            Some(snapshot.dns.ipv4.as_slice()),
-        )
+        // v4 + v6 合并传给 apply：两个家族一次提权一起还原
+        let mut dns = snapshot.dns.ipv4.clone();
+        dns.extend(snapshot.dns.ipv6.iter().cloned());
+        self.platform
+            .apply(&current, snapshot.gateway.as_deref(), Some(&dns))
     }
 }
 

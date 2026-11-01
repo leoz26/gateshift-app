@@ -135,13 +135,8 @@ impl NetworkPlatform for WindowsPlatform {
     fn get_dns(&self, interface: &NetworkInterface) -> Result<DnsConfig> {
         let index = Self::index_of(interface)?;
         let out = Self::ps(&scripts::get_dns_script(index))?;
-        Ok(DnsConfig::new(
-            out.lines()
-                .map(str::trim)
-                .filter(|l| is_ipv4(l))
-                .map(str::to_string)
-                .collect(),
-        ))
+        let (ipv4, ipv6) = scripts::parse_dns_output(&out);
+        Ok(DnsConfig::with_ipv6(ipv4, ipv6))
     }
 
     /// 覆写：网关 + DNS 合并成一次 PowerShell，省掉一次进程冷启动（~300ms+）。
@@ -166,15 +161,13 @@ impl NetworkPlatform for WindowsPlatform {
             .filter(|s| !s.is_empty() && *s != "0.0.0.0")
             .map(str::to_string);
 
+        // DNS 段含 v4/v6 两个子标记，交给统一解析器分拣
         let dns = out
             .split("===DNS===")
             .nth(1)
             .map(|d| {
-                d.lines()
-                    .map(str::trim)
-                    .filter(|l| is_ipv4(l))
-                    .map(str::to_string)
-                    .collect()
+                let (ipv4, ipv6) = scripts::parse_dns_output(&format!("===DNS4===\n{}", d));
+                DnsConfig::with_ipv6(ipv4, ipv6)
             })
             .unwrap_or_default();
 

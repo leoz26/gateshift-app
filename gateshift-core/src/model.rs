@@ -37,28 +37,41 @@ impl NetworkInterface {
     }
 }
 
-/// 某个接口上的 DNS 配置。当前只管理 IPv4。
+/// 某个接口上的 DNS 配置，IPv4 / IPv6 各一份列表。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsConfig {
     #[serde(default)]
     pub ipv4: Vec<String>,
+    /// 旧配置文件 / 旧快照 JSON 里没有这个字段时按空数组处理（serde 兼容）。
+    #[serde(default)]
+    pub ipv6: Vec<String>,
 }
 
 impl DnsConfig {
     pub fn new(ipv4: Vec<String>) -> Self {
-        DnsConfig { ipv4 }
+        DnsConfig {
+            ipv4,
+            ipv6: Vec::new(),
+        }
     }
 
-    /// 空列表 == 自动（DHCP）。
+    pub fn with_ipv6(ipv4: Vec<String>, ipv6: Vec<String>) -> Self {
+        DnsConfig { ipv4, ipv6 }
+    }
+
+    /// 两个列表都空 == 自动（DHCP）。
     pub fn is_auto(&self) -> bool {
-        self.ipv4.is_empty()
+        self.ipv4.is_empty() && self.ipv6.is_empty()
     }
 
     pub fn describe(&self) -> String {
         if self.is_auto() {
             "自动（DHCP）".to_string()
         } else {
-            self.ipv4.join(", ")
+            let mut parts = Vec::new();
+            parts.extend(self.ipv4.iter().cloned());
+            parts.extend(self.ipv6.iter().cloned());
+            parts.join(", ")
         }
     }
 }
@@ -151,6 +164,39 @@ mod tests {
             DnsConfig::new(vec!["1.1.1.1".into()]).describe(),
             "1.1.1.1"
         );
+    }
+
+    #[test]
+    fn dns_describe_mixes_families() {
+        let dns = DnsConfig::with_ipv6(
+            vec!["223.5.5.5".into()],
+            vec!["2400:3200::1".into()],
+        );
+        assert!(!dns.is_auto());
+        assert_eq!(dns.describe(), "223.5.5.5, 2400:3200::1");
+
+        // 只有 IPv6 也算非自动
+        let only6 = DnsConfig::with_ipv6(Vec::new(), vec!["2400:3200::1".into()]);
+        assert!(!only6.is_auto());
+        assert_eq!(only6.describe(), "2400:3200::1");
+    }
+
+    #[test]
+    fn dns_ipv6_defaults_to_empty_for_old_payloads() {
+        // 旧配置文件 / 旧快照 JSON 没有 ipv6 字段，反序列化时必须按空数组处理
+        let old: DnsConfig = serde_json::from_str(r#"{"ipv4": ["223.5.5.5"]}"#).unwrap();
+        assert_eq!(old.ipv4, vec!["223.5.5.5".to_string()]);
+        assert!(old.ipv6.is_empty());
+        assert!(!old.is_auto());
+
+        let old: DnsConfig = serde_json::from_str("{}").unwrap();
+        assert!(old.ipv4.is_empty() && old.ipv6.is_empty());
+        assert!(old.is_auto());
+
+        // 新数据完整往返
+        let dns = DnsConfig::with_ipv6(vec!["223.5.5.5".into()], vec!["2400:3200::1".into()]);
+        let round: DnsConfig = serde_json::from_str(&serde_json::to_string(&dns).unwrap()).unwrap();
+        assert_eq!(round, dns);
     }
 
     #[test]

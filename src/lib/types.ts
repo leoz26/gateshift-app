@@ -12,6 +12,8 @@ export interface NetworkInterface {
 
 export interface DnsConfig {
   ipv4: string[];
+  /** 旧后端不带这个字段 → 可选，缺省按空数组处理。 */
+  ipv6?: string[];
 }
 
 export interface NetworkState {
@@ -33,6 +35,8 @@ export interface RouterProfile {
   name: string;
   gateway: string;
   dns: string[];
+  /** IPv6 DNS；旧配置没有此字段，缺省按空数组（不设置 IPv6 DNS）。 */
+  dns_ipv6?: string[];
 }
 
 export interface Config {

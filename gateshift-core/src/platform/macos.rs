@@ -32,7 +32,7 @@ use std::process::Command;
 use super::NetworkPlatform;
 use crate::error::{stderr_or_placeholder, Error, Result};
 use crate::model::{DnsConfig, GatewayAndDns, NetworkInterface};
-use crate::util::is_ipv4;
+use crate::util::{is_ipv4, is_ipv6};
 
 /// `networksetup -listnetworkserviceorder` 的缓存时长：网络服务列表极少变动，
 /// 而一次 probe 里 `default_interface` / `list_interfaces` 都要读它。
@@ -178,9 +178,11 @@ impl MacOsPlatform {
             // networksetup 用关键字 Empty 表示恢复 DHCP 自动
             "Empty".to_string()
         } else {
+            // IPv4 / IPv6 混排传入：`-setdnsservers` 本身接受混排列表，
+            // 传前逐个校验，非法值直接报错、绝不拼进命令。
             for d in dns {
-                if !is_ipv4(d) {
-                    return Err(Error::InvalidIpv4(d.clone()));
+                if !is_ipv4(d) && !is_ipv6(d) {
+                    return Err(Error::InvalidIpv6(d.clone()));
                 }
             }
             dns.iter()
@@ -422,15 +424,21 @@ impl NetworkPlatform for MacOsPlatform {
 
     /// 读 DNS。这里**保持严格**：读不到就报错 —— 是否降级由 [`Self::get_gateway_and_dns`]
     /// 决定，单独调用它的人应该知道命令确实失败了。
+    ///
+    /// `-getdnsservers` 的输出本身不区分地址族，按行分拣：IPv4 进 `ipv4`、
+    /// IPv6 进 `ipv6`；两个都不是的行（理论上不该出现）沿用现有过滤逻辑直接丢弃。
     fn get_dns(&self, interface: &NetworkInterface) -> Result<DnsConfig> {
         let out = Self::read("networksetup", &["-getdnsservers", &interface.name])?;
-        Ok(DnsConfig::new(
-            out.lines()
-                .map(str::trim)
-                .filter(|l| is_ipv4(l))
-                .map(str::to_string)
-                .collect(),
-        ))
+        let mut ipv4 = Vec::new();
+        let mut ipv6 = Vec::new();
+        for line in out.lines().map(str::trim) {
+            if is_ipv4(line) {
+                ipv4.push(line.to_string());
+            } else if is_ipv6(line) {
+                ipv6.push(line.to_string());
+            }
+        }
+        Ok(DnsConfig::with_ipv6(ipv4, ipv6))
     }
 
     fn set_dns(&self, interface: &NetworkInterface, dns: &[String]) -> Result<()> {

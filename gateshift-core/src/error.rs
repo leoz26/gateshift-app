@@ -31,6 +31,9 @@ pub enum Error {
     #[error("「{0}」不是合法的 IPv4 地址")]
     InvalidIpv4(String),
 
+    #[error("「{0}」不是合法的 IPv6 地址")]
+    InvalidIpv6(String),
+
     #[error("读取配置失败：{0}")]
     ConfigRead(String),
 
@@ -84,6 +87,7 @@ impl Error {
             Error::DnsUnmanageable(_) => "dns_unmanageable",
             Error::InvalidConfig(_) => "invalid_config",
             Error::InvalidIpv4(_) => "invalid_ipv4",
+            Error::InvalidIpv6(_) => "invalid_ipv6",
             Error::ConfigRead(_) => "config_read",
             Error::ConfigParse(_) => "config_parse",
             Error::ConfigWrite(_) => "config_write",

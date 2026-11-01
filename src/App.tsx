@@ -177,12 +177,14 @@ export default function App() {
     try {
       const snap = await takeSnapshot();
       setLastSnapshot(snap);
-      // 快照现在同时记下网关与 DNS（只记 DNS 的还原等于半个还原），日志里一并显示便于核对
+      // 快照现在同时记下网关与 DNS（只记 DNS 的还原等于半个还原），日志里一并显示便于核对；
+      // v6 DNS 有值时也带进日志（旧后端不带 ipv6 字段，缺省按空数组处理）
+      const snapDns6 = snap.dns.ipv6 ?? [];
       pushLog(
         "info",
         `已留底（接口 ${snap.interface.name}，网关 ${snap.gateway ?? "未知（还原时不动网关）"}，DNS ${
           snap.dns.ipv4.join(", ") || "自动"
-        }）`
+        }${snapDns6.length ? `，IPv6 DNS ${snapDns6.join(", ")}` : ""}）`
       );
     } catch (e) {
       reportFailure("留底", e);
@@ -453,10 +455,16 @@ export default function App() {
                     {dnsLocked ? (
                       <span className="status__value--muted">跳过（DNS 不受管理）</span>
                     ) : config.set_dns_on_switch ? (
-                      (pendingMode === "bypass_router"
-                        ? config.bypass_router
-                        : config.main_router
-                      ).dns.join(", ") || "自动（DHCP）"
+                      // v4 与 v6 分两行展示，和状态卡保持一致（旧配置无 dns_ipv6 → 按空数组）
+                      (() => {
+                        const p =
+                          pendingMode === "bypass_router"
+                            ? config.bypass_router
+                            : config.main_router;
+                        const v4 = p.dns.join(", ") || "自动（DHCP）";
+                        const v6 = p.dns_ipv6 ?? [];
+                        return v6.length ? `${v4}\nIPv6: ${v6.join(", ")}` : v4;
+                      })()
                     ) : (
                       "不修改"
                     )}

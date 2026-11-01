@@ -8,7 +8,7 @@
 
 use crate::error::{Error, Result};
 use crate::model::NetworkInterface;
-use crate::util::is_ipv4;
+use crate::util::{is_ipv4, is_ipv6};
 
 /// 用占位符而不是 `format!`，免得跟 PowerShell 的花括号打架。
 const INDEX_TOKEN: &str = "__INDEX__";
@@ -61,8 +61,14 @@ if (@($existing | Where-Object { $_.NextHop -eq $gw }).Count -eq 0) {
 $existing | Where-Object { $_.NextHop -ne $gw } | Remove-NetRoute -InterfaceIndex $idx -PolicyStore ActiveStore -Confirm:$false | Out-Null
 "#;
 
+/// 一次查询同时读 IPv4 / IPv6 两族的服务器地址，中间用标记隔开，
+/// 交给上层按标记切分后解析（`Get-DnsClientServerAddress` 的
+/// `-AddressFamily` 一次只能指定一族，所以必须各查一次再合并）。
 pub const GET_DNS: &str = r#"
+Write-Output '===DNS4==='
 (Get-DnsClientServerAddress -AddressFamily IPv4 -InterfaceIndex __INDEX__).ServerAddresses
+Write-Output '===DNS6==='
+(Get-DnsClientServerAddress -AddressFamily IPv6 -InterfaceIndex __INDEX__).ServerAddresses
 "#;
 
 /// 注意：`Set-DnsClientServerAddress` **没有** `-AddressFamily` 参数，
@@ -99,11 +105,14 @@ pub fn get_dns_script(index: u32) -> String {
 
 pub fn set_dns_script(index: u32, dns: &[String]) -> Result<String> {
     if dns.is_empty() {
+        // 空列表 = 两个地址族一起恢复 DHCP 自动
         return Ok(RESET_DNS.replace(INDEX_TOKEN, &index.to_string()));
     }
+    // IPv4 / IPv6 混排一次传入 `ServerAddresses`（该命令没有 -AddressFamily 参数）；
+    // 传前逐个校验，非法值直接报错、绝不拼进命令。
     for d in dns {
-        if !is_ipv4(d) {
-            return Err(Error::InvalidIpv4(d.clone()));
+        if !is_ipv4(d) && !is_ipv6(d) {
+            return Err(Error::InvalidIpv6(d.clone()));
         }
     }
     let servers = dns
@@ -114,6 +123,27 @@ pub fn set_dns_script(index: u32, dns: &[String]) -> Result<String> {
     Ok(SET_DNS
         .replace(INDEX_TOKEN, &index.to_string())
         .replace(SERVERS_TOKEN, &servers))
+}
+
+/// 解析 [`GET_DNS`] 的输出：按 `===DNS4===` / `===DNS6===` 标记切分，
+/// IPv4 / IPv6 各自按行收集（既非 v4 也非 v6 的行丢弃）。
+pub fn parse_dns_output(out: &str) -> (Vec<String>, Vec<String>) {
+    let mut ipv4 = Vec::new();
+    let mut ipv6 = Vec::new();
+    let mut family = 0; // 0 = 还没见到标记（不该出现），1 = IPv4，2 = IPv6
+    for line in out.lines().map(str::trim) {
+        match line {
+            "===DNS4===" => family = 1,
+            "===DNS6===" => family = 2,
+            l if !l.is_empty() => match family {
+                1 if is_ipv4(l) => ipv4.push(l.to_string()),
+                2 if is_ipv6(l) => ipv6.push(l.to_string()),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    (ipv4, ipv6)
 }
 
 /// 解析 `名称|ifIndex` 形式的一行。`ifIndex` 解析不出来时保留网卡名。
@@ -241,10 +271,82 @@ mod tests {
 
     #[test]
     fn set_dns_rejects_bad_ipv4() {
+        // 既非 v4 也非 v6 的输入统一报 InvalidIpv6（两族校验都过不了）
         assert!(matches!(
             set_dns_script(3, &["bad".to_string()]),
-            Err(Error::InvalidIpv4(_))
+            Err(Error::InvalidIpv6(_))
         ));
+    }
+
+    #[test]
+    fn set_dns_mixed_family_single_call() {
+        // v4 + v6 合并进一次 Set-DnsClientServerAddress，仍然不出现 -AddressFamily
+        let list = set_dns_script(
+            3,
+            &[
+                "223.5.5.5".to_string(),
+                "2400:3200::1".to_string(),
+                "8.8.8.8".to_string(),
+            ],
+        )
+        .unwrap();
+        assert!(
+            list.contains("@('223.5.5.5','2400:3200::1','8.8.8.8')"),
+            "{}",
+            list
+        );
+        assert!(
+            list.matches("Set-DnsClientServerAddress").count() == 1,
+            "v4/v6 必须合并成一次调用：{}",
+            list
+        );
+        assert!(
+            !list.contains("-AddressFamily"),
+            "Set-DnsClientServerAddress 不接受 -AddressFamily：{}",
+            list
+        );
+        assert!(list.contains("-InterfaceIndex 3"), "{}", list);
+    }
+
+    #[test]
+    fn set_dns_rejects_bad_ipv6() {
+        assert!(matches!(
+            set_dns_script(3, &["2400:3200:::1".to_string()]),
+            Err(Error::InvalidIpv6(_))
+        ));
+        assert!(matches!(
+            set_dns_script(3, &["::1::2".to_string()]),
+            Err(Error::InvalidIpv6(_))
+        ));
+    }
+
+    #[test]
+    fn get_dns_script_queries_both_families() {
+        let script = get_dns_script(9);
+        assert!(script.contains("AddressFamily IPv4"), "{}", script);
+        assert!(script.contains("AddressFamily IPv6"), "{}", script);
+        assert!(script.contains("===DNS4===") && script.contains("===DNS6==="), "{}", script);
+        assert!(!script.contains(INDEX_TOKEN));
+    }
+
+    #[test]
+    fn parse_dns_output_splits_families() {
+        let out = "===DNS4===\n223.5.5.5\n8.8.8.8\n===DNS6===\n2400:3200::1\nfe80::1\n";
+        let (v4, v6) = parse_dns_output(out);
+        assert_eq!(v4, vec!["223.5.5.5".to_string(), "8.8.8.8".to_string()]);
+        assert_eq!(v6, vec!["2400:3200::1".to_string(), "fe80::1".to_string()]);
+    }
+
+    #[test]
+    fn parse_dns_output_handles_empty_and_junk() {
+        // 某一族没有服务器时 PowerShell 什么都不输出；乱码行丢弃
+        let out = "===DNS4===\n223.5.5.5\n===DNS6===\nnot-an-ip\n";
+        let (v4, v6) = parse_dns_output(out);
+        assert_eq!(v4, vec!["223.5.5.5".to_string()]);
+        assert!(v6.is_empty());
+
+        let (v4, v6) = parse_dns_output("");
+        assert!(v4.is_empty() && v6.is_empty());
     }
 
     #[test]

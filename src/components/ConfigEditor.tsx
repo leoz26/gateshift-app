@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Config, RouterProfile } from "../lib/types";
-import { isIpv4 } from "../lib/ipv4";
+import { isIpv4, isIpv6 } from "../lib/ipv4";
 import { IconSave } from "./Icons";
 
 function ProfileForm({
@@ -27,7 +27,7 @@ function ProfileForm({
         />
       </label>
       <label>
-        DNS（逗号分隔，留空=自动）
+        IPv4 DNS（逗号分隔，留空=自动）
         <input
           value={profile.dns.join(", ")}
           placeholder="223.5.5.5, 8.8.8.8"
@@ -37,6 +37,23 @@ function ProfileForm({
             onChange({
               ...profile,
               dns: e.target.value
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+      </label>
+      <label>
+        IPv6 DNS（逗号分隔，留空=不设置）
+        <input
+          value={(profile.dns_ipv6 ?? []).join(", ")}
+          placeholder="2400:3200::1, 2400:3200::2"
+          spellCheck={false}
+          onChange={(e) =>
+            onChange({
+              ...profile,
+              dns_ipv6: e.target.value
                 .split(",")
                 .map((s) => s.trim())
                 .filter(Boolean),
@@ -123,6 +140,9 @@ export default function ConfigEditor({
       if (!isIpv4(p.gateway)) return `${label}网关不是合法 IPv4${ipv4Hint(p.gateway)}`;
       for (const d of p.dns) {
         if (!isIpv4(d)) return `${label}DNS「${d}」不是合法 IPv4${ipv4Hint(d)}`;
+      }
+      for (const d of p.dns_ipv6 ?? []) {
+        if (!isIpv6(d)) return `${label}IPv6 DNS「${d}」不是合法 IPv6`;
       }
     }
     if (c.main_router.gateway === c.bypass_router.gateway) {
